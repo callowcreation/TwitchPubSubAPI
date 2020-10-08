@@ -20,11 +20,19 @@ using System;
 
 namespace TwitchPubSubAPI.Payloads.Request
 {
+    /// <summary>
+    /// Request fields required to stop/unlisten from a topic
+    /// </summary>
     [Serializable]
     public class UnListenRequest : ListenRequest
     {
-        public UnListenRequest(string authToken, params string[] topics)
-            : base(authToken, topics)
+        /// <summary>
+        /// Construct an unlisten from topic(s) request
+        /// </summary>
+        /// <param name="accessToken">Access token with the required scope</param>
+        /// <param name="topics">Topics to subscribe to</param>
+        public UnListenRequest(string accessToken, params string[] topics)
+            : base(accessToken, topics)
         {
             type = "UNLISTEN";
         }

@@ -1,5 +1,4 @@
-﻿using System;
-#region Author
+﻿#region Author
 /*
      
      Jones St. Lewis Cropper (caLLow)
@@ -17,11 +16,19 @@
 */
 #endregion
 
+using System;
+
 namespace TwitchPubSubAPI.Payloads.Request
 {
+    /// <summary>
+    /// Request fields required to listen for a ping/pong handshake
+    /// </summary>
     [Serializable]
     public class PingRequest : Payload
     {
+        /// <summary>
+        /// Construct a ping request object
+        /// </summary>
         public PingRequest()
         {
             type = "PING";

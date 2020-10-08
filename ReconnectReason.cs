@@ -18,29 +18,44 @@
 
 namespace TwitchPubSubAPI
 {
+    /// <summary>
+    /// Web socket reconnect attempt reason
+    /// </summary>
     public enum ReconnectReason
     {
         /// <summary>
         /// Internal
         /// </summary>
         None,
+
         /// <summary>
         /// Internal
         /// </summary>
         Exception,
+
         /// <summary>
         /// Handshake did not receive a PONG response
         /// </summary>
         Handshake,
+
         /// <summary>
         /// Socket closed
         /// </summary>
         Closed,
+
         /// <summary>
         /// Aborted for handshake failed or no topic was subscribed to
         /// </summary>
         Aborted,
+        
+        /// <summary>
+        /// Break from loop was invoked from the default switch case 
+        /// </summary>
         DefaultBreak,
+
+        /// <summary>
+        /// Operation cancled can be call by the system with no ill effects
+        /// </summary>
         OperationCanceled
     }
 }

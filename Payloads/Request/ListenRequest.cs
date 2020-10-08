@@ -21,9 +21,55 @@ using System.Security.Cryptography;
 
 namespace TwitchPubSubAPI.Payloads.Request
 {
+    /// <summary>
+    /// Request fields required to listen to a topic
+    /// </summary>
     [Serializable]
     public class ListenRequest : Payload
     {
+        /// <summary>
+        /// Random string to identify the response associated with this request.
+        /// </summary>
+        public string nonce { get; set; }
+
+        /// <summary>
+        /// Access token and topics
+        /// </summary>
+        public Data data { get; set; }
+
+        /// <summary>
+        /// Construct a listen to topic(s) request
+        /// </summary>
+        /// <param name="accessToken">Access token with the required scope</param>
+        /// <param name="topics">Topics to subscribe to</param>
+        public ListenRequest(string accessToken, params string[] topics)
+        {
+            type = "LISTEN";
+            nonce = CalculateNonce(15);
+            data = new Data
+            {
+                auth_token = accessToken,
+                topics = topics
+            };
+        }
+
+        /// <summary>
+        /// Access token and topics
+        /// </summary>
+        [Serializable]
+        public class Data
+        {
+            /// <summary>
+            /// The topics to subscribe to
+            /// </summary>
+            public string[] topics { get; set; }
+
+            /// <summary>
+            /// Access token with valid scopes for the topics
+            /// </summary>
+            public string auth_token { get; set; }
+        }
+
         // https://sqlsteve.wordpress.com/2014/04/23/how-to-create-a-nonce-in-c/
         static string CalculateNonce(int length)
         {
@@ -36,27 +82,6 @@ namespace TwitchPubSubAPI.Payloads.Request
             }
             //Base64 encode and then return
             return Convert.ToBase64String(ByteArray);
-        }
-
-        public string nonce { get; set; }
-        public Data data { get; set; }
-
-        public ListenRequest(string authToken, params string[] topics)
-        {
-            type = "LISTEN";
-            nonce = CalculateNonce(15);
-            data = new Data
-            {
-                auth_token = authToken,
-                topics = topics
-            };
-        }
-
-        [Serializable]
-        public class Data
-        {
-            public string[] topics { get; set; }
-            public string auth_token { get; set; }
         }
     }
 }

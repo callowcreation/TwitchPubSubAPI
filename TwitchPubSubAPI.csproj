@@ -39,10 +39,12 @@
     <Reference Include="System" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Payloads\EmoteMessage.cs" />
     <Compile Include="Payloads\Request\UnListenRequest.cs" />
     <Compile Include="Payloads\Request\ListenRequest.cs" />
     <Compile Include="Payloads\Response\ChatModeratorActions.cs" />
     <Compile Include="Payloads\Response\Bits.cs" />
+    <Compile Include="Payloads\Emote.cs" />
     <Compile Include="Payloads\Response\Commerce.cs" />
     <Compile Include="Payloads\Response\Whispers.cs" />
     <Compile Include="Payloads\Response\Subscriptions.cs" />
@@ -52,6 +54,7 @@
     <Compile Include="Payloads\Payload.cs" />
     <Compile Include="Payloads\Response\PayloadResponse.cs" />
     <Compile Include="Payloads\Response\PayloadMessage.cs" />
+    <Compile Include="TaskExceptionArgs.cs" />
     <Compile Include="ReconnectReason.cs" />
     <Compile Include="PubSubClient.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

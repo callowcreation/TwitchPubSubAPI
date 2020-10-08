@@ -18,23 +18,22 @@
 
 using System;
 
-namespace TwitchPubSubAPI.Payloads.Response
+namespace TwitchPubSubAPI.Payloads
 {
     /// <summary>
-    /// Response from making an topic request
+    /// Chat message sent and emote information
     /// </summary>
     [Serializable]
-    public class PayloadResponse : Payload
+    public class EmoteMessage
     {
         /// <summary>
-        /// The nonce that was passed in the request, if one was provided there.
+        /// Chat message sent by user
         /// </summary>
-        public string nonce { get; set; }
+        public string message { get; set; }
 
         /// <summary>
-        /// The error message associated with the request, or an empty string if there is no error.
-        /// <para>For Bits and whispers events requests, error responses can be: ERR_BADMESSAGE, ERR_BADAUTH, ERR_SERVER, ERR_BADTOPIC.</para>
+        /// Emotes present in the message
         /// </summary>
-        public string error { get; set; }
+        public Emote[] emotes { get; set; }
     }
 }

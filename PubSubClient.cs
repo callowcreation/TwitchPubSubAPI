@@ -29,23 +29,35 @@ using System.Threading.Tasks;
 using TwitchPubSubAPI.Payloads;
 using TwitchPubSubAPI.Payloads.Response;
 using TwitchPubSubAPI.Payloads.Request;
-using System.Text.RegularExpressions;
 
 namespace TwitchPubSubAPI
 {
+    /// <summary>
+    /// Enables notifications from events subscribe to a topic, for updates (e.g., when a user cheers in a channel).
+    /// </summary>
     public class PubSubClient
     {
+        /// <summary>
+        /// Host server
+        /// </summary>
+        public const string HOST = "wss://pubsub-edge.twitch.tv";
+
         const int HEARTBEAT_DELAY_TIME_MS = 1000 * 60 * 4;
-        //const int HEARTBEAT_DELAY_TIME_MS = 1000 * 30;           
         const int MAX_BACKOFF_THRESHOLD_INTERVAL = 1000 * 60 * 2;
         const int BACKOFF_THRESHOLD_INTERVAL = 1000 * 3; //ms to wait before reconnect
 
         const int MAX_PONG_WAIT_INTERVAL = 1000 * 10;
 
+        const string BITS_READ = "bits:read";
+        const string CHANNEL_READ_REDEMPTIONS = "channel:read:redemptions";
+        const string CHANNEL_SUBSCRIPTIONS = "channel_subscriptions";
+        const string WHISPERS_READ = "whispers:read";
+        const string CHANNEL_MODERATE = "channel:moderate";
+
         static int s_ReconnectInterval = BACKOFF_THRESHOLD_INTERVAL;
 
         static Random s_Rnd = new Random();
-        
+
         static ClientWebSocket s_WebSocket;
         static BlockingCollection<string> s_MessageQueue;
         static PingRequest s_PingRequest;
@@ -63,7 +75,7 @@ namespace TwitchPubSubAPI
             {"channel-points-channel-v1", (obj) => s_OnChannelPoints?.Invoke(Convert<Points>(obj)) },
             /*unTested*/{"channel-subscribe-events-v1", (obj) => s_OnChannelSubscriptions?.Invoke(Convert<Subscriptions>(obj)) },
             {"chat_moderator_actions", (obj) => s_OnChannelChatModeratorActions?.Invoke(Convert<ChatModeratorActions>(obj)) },
-            {"whispers", (obj) => s_OnChannelWhispers?.Invoke(Convert<Whispers>(obj)) },
+            {"whispers", InvokeWhisperReceived },
         };
 
         static string[] s_Scopes = null;
@@ -78,126 +90,201 @@ namespace TwitchPubSubAPI
         static event Action<Points> s_OnChannelPoints;
         static event Action<Subscriptions> s_OnChannelSubscriptions;
         static event Action<ChatModeratorActions> s_OnChannelChatModeratorActions;
-        static event Action<Whispers> s_OnChannelWhispers;
-        
-        public static event Action OnServerRestart;
-        public static event Action<PayloadResponse> OnResponse;
-        public static event Action<Payload> OnPayload;
-        public static event Action<ReconnectReason> OnReconnectRequired;
+        static event Action<Whispers.WhispersThreadData> s_OnChannelWhispersThread;
+        static event Action<Whispers.WhispersData> s_OnChannelWhispers;
 
-
-        public class DebugException : EventArgs
+        static void InvokeWhisperReceived(IPayload obj)
         {
-            public readonly Exception exception;
-            public readonly string reason;
+            Whispers whispers = Convert<Whispers>(obj);
 
-            public DebugException(Exception exception, string reason)
+            if (whispers.GetResponseType() == Whispers.ResponseType.Thread)
             {
-                this.exception = exception;
-                this.reason = reason;
+                s_OnChannelWhispersThread?.Invoke(whispers.GetThreadData());
+            }
+            else
+            {
+                s_OnChannelWhispers?.Invoke(whispers.GetData());
             }
         }
 
-        public static event Action<DebugException> OnTaskException;
-        
+        /// <summary>
+        /// Sever has sent a reconnect message and we need to reconnect
+        /// </summary>
+        public static event Action OnServerRestart;
+
+        /// <summary>
+        /// Responses received from the server
+        /// </summary>
+        public static event Action<PayloadResponse> OnResponse;
+
+        /// <summary>
+        /// Payload responses received from the server containing data
+        /// </summary>
+        public static event Action<Payload> OnPayload;
+
+        /// <summary>
+        /// Reconnection is attemped and the reason why reconnection is needed
+        /// </summary>
+        public static event Action<ReconnectReason> OnReconnectRequired;
+
+        /// <summary>
+        /// An exception occured within a Task
+        /// </summary>
+        public static event Action<TaskExceptionArgs> OnTaskException;
+
+        /// <summary>
+        /// Cheers happen in a particular channel
+        /// </summary>
         public static event Action<Bits> OnBits
         {
             add
             {
-                ValidateOrThrow("bits:read", nameof(OnBits));
+                ValidateOrThrow(BITS_READ, nameof(OnBits));
                 s_OnChannelBits += value;
             }
             remove { s_OnChannelBits -= value; }
         }
 
+        /// <summary>
+        /// A user earns a new Bits badge in a particular channel, and chooses to share the notification with chat.
+        /// </summary>
         public static event Action<BitsBadge> OnBitsBadge
         {
             add
             {
-                ValidateOrThrow("bits:read", nameof(OnBitsBadge));
+                ValidateOrThrow(BITS_READ, nameof(OnBitsBadge));
                 s_OnChannelBitsBadge += value;
             }
             remove { s_OnChannelBitsBadge -= value; }
         }
 
+        /// <summary>
+        /// A custom reward is redeemed in a channel.
+        /// </summary>
         public static event Action<Points> OnPoints
         {
             add
             {
-                ValidateOrThrow("channel:read:redemptions", nameof(OnPoints));
+                ValidateOrThrow(CHANNEL_READ_REDEMPTIONS, nameof(OnPoints));
                 s_OnChannelPoints += value;
             }
             remove { s_OnChannelPoints -= value; }
         }
 
+        /// <summary>
+        /// Anyone subscribes (first month), resubscribes (subsequent months), or gifts a subscription to a channel. 
+        /// </summary>
         public static event Action<Subscriptions> OnSubscriptions
         {
             add
             {
-                ValidateOrThrow("channel_subscriptions", nameof(OnSubscriptions));
+                ValidateOrThrow(CHANNEL_SUBSCRIPTIONS, nameof(OnSubscriptions));
                 s_OnChannelSubscriptions += value;
             }
             remove { s_OnChannelSubscriptions -= value; }
         }
 
+        /// <summary>
+        /// A moderator performs an action in the channel.
+        /// </summary>
         public static event Action<ChatModeratorActions> OnChatModeratorActions
         {
             add
             {
-                ValidateOrThrow("channel:moderate", nameof(OnChatModeratorActions));
+                ValidateOrThrow(CHANNEL_MODERATE, nameof(OnChatModeratorActions));
                 s_OnChannelChatModeratorActions += value;
             }
             remove { s_OnChannelChatModeratorActions -= value; }
         }
 
-        public static event Action<Whispers> OnWhispers
+        /// <summary>
+        /// Sent before the incoming whisper 
+        /// <para>Can be used for validation of whisper</para>
+        /// </summary>
+        public static event Action<Whispers.WhispersThreadData> OnWhispersThread
         {
             add
             {
-                ValidateOrThrow("whispers:read", nameof(OnWhispers));
+                ValidateOrThrow(WHISPERS_READ, nameof(OnWhispersThread));
+                s_OnChannelWhispersThread += value;
+            }
+            remove { s_OnChannelWhispersThread -= value; }
+        }
+
+        /// <summary>
+        /// Anyone whispers the specified user (the channel owner).
+        /// </summary>
+        public static event Action<Whispers.WhispersData> OnWhispers
+        {
+            add
+            {
+                ValidateOrThrow(WHISPERS_READ, nameof(OnWhispers));
                 s_OnChannelWhispers += value;
             }
             remove { s_OnChannelWhispers -= value; }
         }
+        
+        /// <summary>
+        /// Current websocket state
+        /// </summary>
+        public static WebSocketState GetState
+        {
+            get { return s_WebSocket.State; }
+        }
 
+        /// <summary>
+        /// Set the underlying scopes to validate scopes on event invocation
+        /// <para>Scope validation will not be checked if this method is not called</para>
+        /// </summary>
+        /// <param name="scopes">The scopes that are allowed by the current access token</param>
         public static void ValidateFromAuthScopes(string[] scopes)
         {
             s_Scopes = scopes;
         }
 
-        public static WebSocketState GetState()
-        {
-            return s_WebSocket.State;
-        }
-
-        public static async Task Start(string authToken, string[] topics)
+        /// <summary>
+        /// Initialize the connection and set up the handshake
+        /// Topics: (https://dev.twitch.tv/docs/pubsub#topics)
+        /// </summary>
+        /// <param name="host">Host server to connect to</param>
+        /// <param name="accessToken">Access token with the required scopes to listen for the desired topics</param>
+        /// <param name="topics">Topics to handle</param>
+        /// <returns></returns>
+        public static async Task Start(string host, string accessToken, string[] topics)
         {
             try
             {
                 InitComponents();
 
-                await ConnectAsync();
+                await ConnectAsync(host);
 
                 _ = Task.Run(() => ProcessMessageQueue());
                 _ = Task.Run(() => Monitor());
 
                 await Heartbeat();
-                await Listen(authToken, topics);
+                await Listen(accessToken, topics);
             }
             catch (Exception ex)
             {
-                Console.WriteLine("------------------- Start Exception");
-                Console.WriteLine(ex);
+                OnTaskException?.Invoke(new TaskExceptionArgs(ex, "Startup Failed"));
+                throw ex;
             }
 
         }
 
-        public static async Task ConnectAsync()
+        /// <summary>
+        /// Connect to the PubSub server
+        /// </summary>
+        /// <param name="host">Host server to connect to</param>
+        /// <returns></returns>
+        public static async Task ConnectAsync(string host)
         {
-            await s_WebSocket.ConnectAsync(new Uri("wss://pubsub-edge.twitch.tv"), s_CancellationSource.Token);
-            Console.WriteLine($"WebSocketConnect State: {s_WebSocket.State}");
+            await s_WebSocket.ConnectAsync(new Uri(host), s_CancellationSource.Token);
         }
 
+        /// <summary>
+        /// Initialize websockes and other members
+        /// </summary>
         public static void InitComponents()
         {
             s_WebSocket = new ClientWebSocket();
@@ -211,35 +298,45 @@ namespace TwitchPubSubAPI
             s_ProcessCancellationSource = new CancellationTokenSource();
         }
 
-        public static async Task Listen(string authToken, string[] topics)
+        /// <summary>
+        /// Send a request to listen to multiple topics
+        /// </summary>
+        /// <param name="accessToken">Access token with the required scopes to listen for the desired topics</param>
+        /// <param name="topics">Topics to handle</param>
+        /// <returns></returns>
+        public static async Task Listen(string accessToken, string[] topics)
         {
-            ListenRequest listenRequest = new ListenRequest(authToken, topics);
+            ListenRequest listenRequest = new ListenRequest(accessToken, topics);
             s_ListenNonce = listenRequest.nonce;
             await SendAsync(JObject.FromObject(listenRequest));
-
-            Console.WriteLine($"Listen to topic(s) {string.Join(",", topics)}");
         }
 
-        public static async Task UnListen(string authToken, string[] topics)
+        /// <summary>
+        /// Send a request to stop/unlisten to multiple topics
+        /// </summary>
+        /// <param name="accessToken">Access token with the required scopes to listen for the desired topics</param>
+        /// <param name="topics">Topics to handle</param>
+        /// <returns></returns>
+        public static async Task UnListen(string accessToken, string[] topics)
         {
             if (s_WebSocket.State != WebSocketState.Open) return;
-            
-            await SendAsync(JObject.FromObject(new UnListenRequest(authToken, topics)));
 
-            Console.WriteLine($"UnListen to topic(s) {string.Join(",", topics)}");
+            await SendAsync(JObject.FromObject(new UnListenRequest(accessToken, topics)));
         }
 
+        /// <summary>
+        /// Maintains the heartbeat PING/PONG to keep the connection open
+        /// </summary>
+        /// <returns></returns>
         public static async Task Heartbeat()
         {
             s_PongReceived = false;
-            
+
             try
             {
                 await SendAsync(JObject.FromObject(s_PingRequest));
                 pingSentCounter++;
-                Console.WriteLine($"Sent ping {pingSentCounter}");
-                    
-                // 
+
                 _ = Task.Delay(1000 * 10).ContinueWith(async (task) =>
                 {
                     if (s_PongReceived == false)
@@ -249,13 +346,16 @@ namespace TwitchPubSubAPI
                     }
                 });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine("------------------- Heartbeat Exception");
                 await InvokeReconnectWithBackoff(ReconnectReason.Exception);
             }
         }
 
+        /// <summary>
+        /// Monitor incoming websocket messages and adds them to a message queue
+        /// </summary>
+        /// <returns></returns>
         public static async Task Monitor()
         {
             CancellationToken cancellationToken = s_CancellationSource.Token;
@@ -263,7 +363,6 @@ namespace TwitchPubSubAPI
             {
                 try
                 {
-                    Console.WriteLine($"Monitor State: {s_WebSocket.State}");
                     if ((s_WebSocket.State == WebSocketState.Open ||
                         s_WebSocket.State == WebSocketState.CloseSent) && cancellationToken.IsCancellationRequested == false)
                     {
@@ -303,15 +402,15 @@ namespace TwitchPubSubAPI
                 }
                 catch (OperationCanceledException ex)
                 {
-                    OnTaskException?.Invoke(new DebugException(ex, "OperationCanceledException"));
+                    OnTaskException?.Invoke(new TaskExceptionArgs(ex, "OperationCanceledException"));
                 }
                 catch (WebSocketException ex)
                 {
-                    OnTaskException?.Invoke(new DebugException(ex, "WebSocketException"));
+                    OnTaskException?.Invoke(new TaskExceptionArgs(ex, "WebSocketException"));
                 }
                 catch (Exception ex)
                 {
-                    OnTaskException?.Invoke(new DebugException(ex, "Monitor"));
+                    OnTaskException?.Invoke(new TaskExceptionArgs(ex, "Monitor"));
                     await InvokeReconnectWithBackoff(ReconnectReason.Exception);
                     break;
                 }
@@ -319,6 +418,9 @@ namespace TwitchPubSubAPI
             await InvokeReconnectWithBackoff(ReconnectReason.OperationCanceled);
         }
 
+        /// <summary>
+        /// Handle incoming websocket messages that are added to the message queue
+        /// </summary>
         public static void ProcessMessageQueue()
         {
             CancellationToken cancellationToken = s_ProcessCancellationSource.Token;
@@ -333,7 +435,6 @@ namespace TwitchPubSubAPI
                 if (s_MessageQueue.TryTake(out string item))
                 {
                     Payload response = JsonConvert.DeserializeObject<Payload>(item);
-                    Console.WriteLine($"Process Queue Message: {response.type}");
                     OnPayload?.Invoke(response);
 
                     switch (response.type)
@@ -352,11 +453,9 @@ namespace TwitchPubSubAPI
                         case "RESPONSE":
                             {
                                 PayloadResponse payloadResponse = JsonConvert.DeserializeObject<PayloadResponse>(item);
-                                Console.WriteLine($"Process: nonce={payloadResponse.nonce == s_ListenNonce} error={payloadResponse.error}");
-                                if(payloadResponse.nonce != s_ListenNonce)
+                                if (payloadResponse.nonce != s_ListenNonce)
                                 {
-                                    // Cause fail exception 
-                                    // Possible baddie
+                                    throw new AccessViolationException($"The nonce received does not match {s_ListenNonce} Unknown: {payloadResponse.nonce}");
                                 }
                                 OnResponse?.Invoke(payloadResponse);
                             }
@@ -367,19 +466,23 @@ namespace TwitchPubSubAPI
 
                                 string topicKey = GetTopicKey(payloadMessage.data.topic);
 
-                                if(topicKey == "whispers")
+                                if (topicKey == "whispers")
                                 {
                                     JObject jobj = JObject.Parse(payloadMessage.data.message);
 
                                     JToken jtokenType = jobj.GetValue("type");
                                     JToken jtokenData = jobj.GetValue("data");
+                                    JToken jtokenDataObject = jobj.GetValue("data_object");
                                     string type = jtokenType.ToString();
 
                                     try
                                     {
+
+#pragma warning disable 0618
                                         Whispers.Data data = JsonConvert.DeserializeObject<Whispers.Data>(jtokenData.ToString());
-                                        payloadMessage.data.message = JObject.FromObject(new { type, data }).ToString().Replace("\n", "").Replace("\r", "");
-                                        Console.WriteLine($"Process: topic={payloadMessage.data.topic} message={payloadMessage.data.message}");
+                                        Whispers.Data data_object = JsonConvert.DeserializeObject<Whispers.Data>(jtokenDataObject.ToString());
+#pragma warning restore 0618
+                                        payloadMessage.data.message = JObject.FromObject(new { type, data, data_object }).ToString().Replace("\n", "").Replace("\r", "");
 
                                         if (s_TopicEvents.TryGetValue(topicKey, out Action<IPayload> value))
                                         {
@@ -388,8 +491,7 @@ namespace TwitchPubSubAPI
                                     }
                                     catch (Exception ex)
                                     {
-                                        Console.WriteLine(ex);
-                                        OnTaskException?.Invoke(new DebugException(ex, "ProcessMessageQueue Whisper"));
+                                        OnTaskException?.Invoke(new TaskExceptionArgs(ex, "ProcessMessageQueue Whisper"));
                                     }
                                 }
                                 else
@@ -435,7 +537,7 @@ namespace TwitchPubSubAPI
         {
             return topic.Substring(0, topic.LastIndexOf('.'));
         }
-        
+
         static async Task InvokeReconnectWithBackoff(ReconnectReason reconnectReason)
         {
             s_CancellationSource.Cancel();
@@ -443,8 +545,6 @@ namespace TwitchPubSubAPI
             s_SendCancellationSource.Cancel();
 
             int interval = s_ReconnectInterval + GetJitter(1000);
-
-            Console.WriteLine($"Reconnecting in {interval}  Reason: {reconnectReason}");
 
             await Task.Delay(interval);
             s_ReconnectInterval *= 2;
